@@ -17,6 +17,7 @@ class NEQUIPLayer(flax.linen.Module):
     mlp_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish
     mlp_n_hidden: int = 64
     mlp_n_layers: int = 2
+    n_radial_basis: int = 8
 
     @flax.linen.compact
     def __call__(
@@ -53,6 +54,7 @@ class NEQUIPLayer(flax.linen.Module):
             self.mlp_activation,
             self.mlp_n_hidden,
             self.mlp_n_layers,
+            self.n_radial_basis,
             self.sh_lmax,
         )(vectors, node_feats, senders, receivers)
 
@@ -77,6 +79,7 @@ class MessagePassingConvolution(flax.linen.Module):
     activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish
     mlp_n_hidden: int = 64
     mlp_n_layers: int = 2
+    n_radial_basis: int = 8
     sh_lmax: int = 3
 
     @flax.linen.compact
@@ -108,15 +111,13 @@ class MessagePassingConvolution(flax.linen.Module):
         ).regroup()  # [n_edges, irreps]
 
         # Radial part
-        basis = e3nn.bessel(lengths.array[:, 0], 8)  # [n_edges, num_basis]
-        cutoff = e3nn.poly_envelope(5, 2)(lengths.array)  # [n_edges, 1]
-        radial_embedding = basis * cutoff  # [n_edges, num_basis]
         mix = e3nn.flax.MultiLayerPerceptron(
             self.mlp_n_layers * (self.mlp_n_hidden,) + (messages.irreps.num_irreps,),
             self.activation,
             output_activation=False,
         )(
-            radial_embedding
+            e3nn.bessel(lengths.array[:, 0], self.n_radial_basis)
+            * e3nn.poly_envelope(5, 2)(lengths.array)
         )  # [n_edges, num_irreps]
 
         # Product of radial and angular part
