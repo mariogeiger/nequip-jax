@@ -10,8 +10,7 @@ class NEQUIPLayer(flax.linen.Module):
     avg_num_neighbors: float
     num_species: int = 1
     sh_lmax: int = 3
-    num_features: int = 64
-    hidden_irreps: e3nn.Irreps = e3nn.Irreps("0e + 1o + 2e")
+    target_irreps: e3nn.Irreps = 64 * e3nn.Irreps("0e + 1o + 2e")
     even_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish
     odd_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.tanh
     mlp_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish
@@ -36,21 +35,23 @@ class NEQUIPLayer(flax.linen.Module):
         assert senders.shape == (n_edge,)
         assert receivers.shape == (n_edge,)
 
-        # hidden irreps plus extra scalars for the gate activation
-        target_irreps: e3nn.Irreps = self.num_features * e3nn.Irreps(self.hidden_irreps)
-        target_irreps += target_irreps.filter(drop="0e").num_irreps * e3nn.Irreps("0e")
+        # target irreps plus extra scalars for the gate activation
+        target_irreps = e3nn.Irreps(self.target_irreps)
+        irreps = target_irreps + target_irreps.filter(
+            drop="0e + 0o"
+        ).num_irreps * e3nn.Irreps("0e")
 
         self_connection = e3nn.flax.Linear(
-            target_irreps, num_indexed_weights=self.num_species, name="skip_tp"
+            irreps, num_indexed_weights=self.num_species, name="skip_tp"
         )(
             node_specie, node_feats
-        )  # [n_nodes, feature * hidden_irreps]
+        )  # [n_nodes, feature * target_irreps]
 
         node_feats = e3nn.flax.Linear(node_feats.irreps, name="linear_up")(node_feats)
 
         node_feats = MessagePassingConvolution(
             self.avg_num_neighbors,
-            target_irreps,
+            irreps,
             self.mlp_activation,
             self.mlp_n_hidden,
             self.mlp_n_layers,
@@ -58,9 +59,9 @@ class NEQUIPLayer(flax.linen.Module):
             self.sh_lmax,
         )(vectors, node_feats, senders, receivers)
 
-        node_feats = e3nn.flax.Linear(target_irreps, name="linear_down")(node_feats)
+        node_feats = e3nn.flax.Linear(irreps, name="linear_down")(node_feats)
 
-        node_feats = node_feats + self_connection  # [n_nodes, feature * hidden_irreps]
+        node_feats = node_feats + self_connection  # [n_nodes, irreps]
 
         node_feats = e3nn.gate(
             node_feats,
@@ -70,6 +71,8 @@ class NEQUIPLayer(flax.linen.Module):
             odd_gate_act=self.odd_activation,
         )
 
+        assert node_feats.irreps == target_irreps
+        assert node_feats.shape == (n_node, target_irreps.dim)
         return node_feats
 
 
