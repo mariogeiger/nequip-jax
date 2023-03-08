@@ -30,18 +30,18 @@ class NEQUIPLayer(flax.linen.Module):
         assert senders.shape == (n_edge,)
         assert receivers.shape == (n_edge,)
 
-        lengths = safe_norm(vectors.array, axis=-1)
+        lengths = e3nn.norm(vectors)
 
-        basis = e3nn.bessel(lengths, 8)  # [n_edges, num_basis]
-        cutoff = e3nn.poly_envelope(5, 2)(lengths)  # [n_edges]
-        radial_embedding = basis * cutoff[:, None]  # [n_edges, num_basis]
+        basis = e3nn.bessel(lengths.array[:, 0], 8)  # [n_edges, num_basis]
+        cutoff = e3nn.poly_envelope(5, 2)(lengths.array)  # [n_edges, 1]
+        radial_embedding = basis * cutoff  # [n_edges, num_basis]
 
         edge_attrs = e3nn.concatenate(
             [
                 radial_embedding,
                 e3nn.spherical_harmonics(
                     [l for l in range(1, self.sh_lmax + 1)],
-                    vectors / lengths[..., None],
+                    vectors / lengths,
                     normalize=False,
                     normalization="component",
                 ),
@@ -122,9 +122,3 @@ class MessagePassingConvolution(flax.linen.Module):
         node_feats = zeros.at[receivers].add(messages)  # [n_nodes, irreps]
 
         return node_feats / jnp.sqrt(self.avg_num_neighbors)
-
-
-def safe_norm(x: jnp.ndarray, axis: int = None, keepdims=False) -> jnp.ndarray:
-    """nan-safe norm."""
-    x2 = jnp.sum(x**2, axis=axis, keepdims=keepdims)
-    return jnp.where(x2 == 0, 1, x2) ** 0.5
