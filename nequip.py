@@ -22,6 +22,14 @@ class NEQUIPLayer(flax.linen.Module):
         senders: jnp.ndarray,  # [n_edges]
         receivers: jnp.ndarray,  # [n_edges]
     ):
+        n_edge = vectors.shape[0]
+        n_node = node_feats.shape[0]
+        assert vectors.shape == (n_edge, 3)
+        assert node_feats.shape == (n_node, node_feats.irreps.dim)
+        assert node_specie.shape == (n_node,)
+        assert senders.shape == (n_edge,)
+        assert receivers.shape == (n_edge,)
+
         lengths = safe_norm(vectors.array, axis=-1)
 
         basis = e3nn.bessel(lengths, 8)  # [n_edges, num_basis]
