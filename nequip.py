@@ -2,16 +2,21 @@ from typing import Callable
 
 import e3nn_jax as e3nn
 import flax
+import jax
 import jax.numpy as jnp
 
 
 class NEQUIPLayer(flax.linen.Module):
     avg_num_neighbors: float
-    activation: Callable[[jnp.ndarray], jnp.ndarray]
+    num_species: int = 1
     sh_lmax: int = 3
     num_features: int = 64
     hidden_irreps: e3nn.Irreps = e3nn.Irreps("0e + 1o + 2e")
-    num_species: int = 1
+    even_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish
+    odd_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.tanh
+    mlp_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish
+    mlp_n_hidden: int = 64
+    mlp_n_layers: int = 2
 
     @flax.linen.compact
     def __call__(
@@ -30,7 +35,7 @@ class NEQUIPLayer(flax.linen.Module):
         assert senders.shape == (n_edge,)
         assert receivers.shape == (n_edge,)
 
-        lengths = e3nn.norm(vectors)
+        lengths = e3nn.norm(vectors)  # [n_edges, (0e).dim]
 
         basis = e3nn.bessel(lengths.array[:, 0], 8)  # [n_edges, num_basis]
         cutoff = e3nn.poly_envelope(5, 2)(lengths.array)  # [n_edges, 1]
@@ -63,13 +68,21 @@ class NEQUIPLayer(flax.linen.Module):
         target_irreps += target_irreps.filter(drop="0e").num_irreps * e3nn.Irreps("0e")
 
         node_feats = MessagePassingConvolution(
-            self.avg_num_neighbors, target_irreps, self.activation
+            self.avg_num_neighbors,
+            target_irreps,
+            self.mlp_activation,
+            self.mlp_n_hidden,
+            self.mlp_n_layers,
         )(node_feats, edge_attrs, senders, receivers)
 
         node_feats = e3nn.flax.Linear(target_irreps, name="linear_down")(node_feats)
 
         node_feats = e3nn.gate(
-            node_feats, even_act=self.activation, even_gate_act=self.activation
+            node_feats,
+            even_act=self.even_activation,
+            even_gate_act=self.even_activation,
+            odd_act=self.odd_activation,
+            odd_gate_act=self.odd_activation,
         )
 
         node_feats = node_feats + sc  # [n_nodes, feature * hidden_irreps]
@@ -80,7 +93,9 @@ class NEQUIPLayer(flax.linen.Module):
 class MessagePassingConvolution(flax.linen.Module):
     avg_num_neighbors: float
     target_irreps: e3nn.Irreps
-    activation: Callable[[jnp.ndarray], jnp.ndarray]
+    activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish
+    mlp_n_hidden: int = 64
+    mlp_n_layers: int = 2
 
     @flax.linen.compact
     def __call__(
@@ -107,7 +122,7 @@ class MessagePassingConvolution(flax.linen.Module):
         ).regroup()  # [n_edges, irreps]
 
         mix = e3nn.flax.MultiLayerPerceptron(
-            3 * [64] + [messages.irreps.num_irreps],
+            self.mlp_n_layers * (self.mlp_n_hidden,) + (messages.irreps.num_irreps,),
             self.activation,
             output_activation=False,
         )(
