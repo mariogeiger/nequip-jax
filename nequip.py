@@ -93,7 +93,6 @@ class MessagePassingConvolution(flax.linen.Module):
         senders: jnp.ndarray,  # [n_edges, ]
         receivers: jnp.ndarray,  # [n_edges, ]
     ) -> e3nn.IrrepsArray:
-        lengths = e3nn.norm(vectors)  # [n_edges, (0e).dim]
         messages = node_feats[senders]
 
         # Angular part
@@ -104,8 +103,8 @@ class MessagePassingConvolution(flax.linen.Module):
                     messages,
                     e3nn.spherical_harmonics(
                         [l for l in range(1, self.sh_lmax + 1)],
-                        vectors / lengths,
-                        normalize=False,
+                        vectors,
+                        normalize=True,
                         normalization="component",
                     ),
                     filter_ir_out=self.target_irreps,
@@ -114,13 +113,18 @@ class MessagePassingConvolution(flax.linen.Module):
         ).regroup()  # [n_edges, irreps]
 
         # Radial part
+        lengths = e3nn.norm(vectors).array  # [n_edges, 1]
         mix = e3nn.flax.MultiLayerPerceptron(
             self.mlp_n_layers * (self.mlp_n_hidden,) + (messages.irreps.num_irreps,),
             self.activation,
             output_activation=False,
         )(
-            e3nn.bessel(lengths.array[:, 0], self.n_radial_basis)
-            * e3nn.poly_envelope(5, 2)(lengths.array)
+            jnp.where(
+                lengths == 0.0,  # discard 0 length edges that come from graph padding
+                0.0,
+                e3nn.bessel(lengths[:, 0], self.n_radial_basis)
+                * e3nn.poly_envelope(5, 2)(lengths),
+            )
         )  # [n_edges, num_irreps]
 
         # Product of radial and angular part
