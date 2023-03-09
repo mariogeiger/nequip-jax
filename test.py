@@ -2,7 +2,7 @@ import e3nn_jax as e3nn
 import jax
 import jax.numpy as jnp
 
-from nequip import NEQUIPLayer
+from nequip_jax import NEQUIPLayer
 
 
 def main():
