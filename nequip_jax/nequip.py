@@ -35,8 +35,11 @@ class NEQUIPLayer(flax.linen.Module):
         assert senders.shape == (n_edge,)
         assert receivers.shape == (n_edge,)
 
+        # we regroup the target irreps to make sure that gate activation
+        # has the same irreps as the target
+        target_irreps = e3nn.Irreps(self.target_irreps).regroup()
+
         # target irreps plus extra scalars for the gate activation
-        target_irreps = e3nn.Irreps(self.target_irreps)
         irreps = target_irreps + target_irreps.filter(
             drop="0e + 0o"
         ).num_irreps * e3nn.Irreps("0e")
