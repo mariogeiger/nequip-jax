@@ -1,10 +1,11 @@
 import e3nn_jax as e3nn
 import flax
+import haiku as hk
 import jax
 import jax.numpy as jnp
 import jraph
 
-from nequip_jax import NEQUIPLayer
+from nequip_jax import NEQUIPLayerFlax, NEQUIPLayerHaiku
 
 
 class NEQUIP(flax.linen.Module):
@@ -20,7 +21,7 @@ class NEQUIP(flax.linen.Module):
         node_feats = e3nn.IrrepsArray(f"{node_feats.shape[1]}x0e", node_feats)
 
         for _ in range(3):
-            layer = NEQUIPLayer(
+            layer = NEQUIPLayerFlax(
                 avg_num_neighbors=1.0,
             )
             node_feats = layer(
@@ -34,9 +35,34 @@ class NEQUIP(flax.linen.Module):
         return node_feats
 
 
-def main():
-    model = NEQUIP()
+@hk.without_apply_rng
+@hk.transform
+def hk_model(graph: jraph.GraphsTuple) -> jraph.GraphsTuple:
+    positions = graph.nodes["positions"]
+    species = graph.nodes["species"]
 
+    vectors = e3nn.IrrepsArray(
+        "1o", positions[graph.receivers] - positions[graph.senders]
+    )
+    node_feats = hk.Embed(vocab_size=5, embed_dim=32)(species)
+    node_feats = e3nn.IrrepsArray(f"{node_feats.shape[1]}x0e", node_feats)
+
+    for _ in range(3):
+        layer = NEQUIPLayerHaiku(
+            avg_num_neighbors=1.0,
+        )
+        node_feats = layer(
+            vectors,
+            node_feats,
+            species,
+            graph.senders,
+            graph.receivers,
+        )
+
+    return node_feats
+
+
+def main(model):
     graph = jraph.GraphsTuple(
         nodes={
             "positions": jnp.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
@@ -52,7 +78,8 @@ def main():
 
     w = model.init(jax.random.PRNGKey(0), graph)
 
-    print(jax.tree_util.tree_map(lambda x: x.shape, w))
+    # print(jax.tree_util.tree_map(lambda x: x.shape, w))
+    print("number of parameters:", sum(x.size for x in jax.tree_util.tree_leaves(w)))
 
     apply = jax.jit(model.apply)
 
@@ -66,4 +93,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main(NEQUIP())
+    main(hk_model)
