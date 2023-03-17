@@ -1,4 +1,4 @@
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
 import e3nn_jax as e3nn
 import flax
@@ -90,7 +90,7 @@ class NEQUIPLayerHaiku(hk.Module):
 def _impl(
     Linear: Callable,
     MultiLayerPerceptron: Callable,
-    self,
+    self: Union[NEQUIPLayerFlax, NEQUIPLayerHaiku],
     vectors: e3nn.IrrepsArray,  # [n_edges, 3]
     node_feats: e3nn.IrrepsArray,  # [n_nodes, irreps]
     node_specie: jnp.ndarray,  # [n_nodes] int between 0 and num_species-1
