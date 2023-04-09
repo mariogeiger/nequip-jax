@@ -148,13 +148,12 @@ def _impl(
         self.mlp_activation,
         output_activation=False,
     )(
-        jnp.where(
-            lengths == 0.0,  # discard 0 length edges that come from graph padding
-            0.0,
-            e3nn.bessel(lengths[:, 0], self.n_radial_basis)
-            * e3nn.poly_envelope(5, 2)(lengths),
-        )
+        e3nn.bessel(lengths[:, 0], self.n_radial_basis)
+        * e3nn.poly_envelope(5, 2)(lengths),
     )  # [n_edges, num_irreps]
+
+    # Discard 0 length edges that come from graph padding
+    mix = jnp.where(lengths == 0.0, 0.0, mix)
 
     # Product of radial and angular part
     messages = messages * mix  # [n_edges, irreps]
