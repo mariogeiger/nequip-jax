@@ -127,7 +127,7 @@ def _impl(
     # Angular part
     messages = e3nn.concatenate(
         [
-            messages.filter(self.output_irreps),
+            messages.filter(irreps),
             e3nn.tensor_product(
                 messages,
                 e3nn.spherical_harmonics(
@@ -136,7 +136,7 @@ def _impl(
                     normalize=True,
                     normalization="component",
                 ),
-                filter_ir_out=self.output_irreps,
+                filter_ir_out=irreps,
             ),
         ]
     ).regroup()  # [n_edges, irreps]
