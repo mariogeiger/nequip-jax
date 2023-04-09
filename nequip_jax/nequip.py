@@ -124,39 +124,72 @@ def _impl(
 
     messages = node_feats[senders]
 
-    # Angular part
-    messages = e3nn.concatenate(
-        [
-            messages.filter(self.output_irreps),
-            e3nn.tensor_product(
-                messages,
-                e3nn.spherical_harmonics(
-                    [l for l in range(1, self.max_ell + 1)],
-                    vectors,
-                    normalize=True,
-                    normalization="component",
+    if False:
+        # Angular part
+        messages = e3nn.concatenate(
+            [
+                messages.filter(irreps),
+                e3nn.tensor_product(
+                    messages,
+                    e3nn.spherical_harmonics(
+                        [l for l in range(1, self.max_ell + 1)],
+                        vectors,
+                        normalize=True,
+                        normalization="component",
+                    ),
+                    filter_ir_out=irreps,
                 ),
-                filter_ir_out=self.output_irreps,
-            ),
-        ]
-    ).regroup()  # [n_edges, irreps]
+            ]
+        ).regroup()  # [n_edges, irreps]
 
-    # Radial part
-    lengths = e3nn.norm(vectors).array  # [n_edges, 1]
-    mix = MultiLayerPerceptron(
-        self.mlp_n_layers * (self.mlp_n_hidden,) + (messages.irreps.num_irreps,),
-        self.mlp_activation,
-        output_activation=False,
-    )(
-        e3nn.bessel(lengths[:, 0], self.n_radial_basis)
-        * e3nn.poly_envelope(5, 2)(lengths),
-    )  # [n_edges, num_irreps]
+        # Radial part
+        lengths = e3nn.norm(vectors).array  # [n_edges, 1]
+        mix = MultiLayerPerceptron(
+            self.mlp_n_layers * (self.mlp_n_hidden,) + (messages.irreps.num_irreps,),
+            self.mlp_activation,
+            output_activation=False,
+        )(
+            e3nn.bessel(lengths[:, 0], self.n_radial_basis)
+            * e3nn.poly_envelope(5, 2)(lengths),
+        )  # [n_edges, num_irreps]
 
-    # Discard 0 length edges that come from graph padding
-    mix = jnp.where(lengths == 0.0, 0.0, mix)
+        # Discard 0 length edges that come from graph padding
+        mix = jnp.where(lengths == 0.0, 0.0, mix)
 
-    # Product of radial and angular part
-    messages = messages * mix  # [n_edges, irreps]
+        # Product of radial and angular part
+        messages = messages * mix  # [n_edges, irreps]
+
+    else:
+        from e3nn_jax.experimental.spherical_harmonics_convolution import (
+            SHConvolutionFlax,
+        )
+
+        messages = messages.mul_to_axis()
+        conv = SHConvolutionFlax(e3nn.Irreps([(1, ir) for _, ir in irreps]))
+        w = conv.init(jax.random.PRNGKey(0), messages[0, 0], vectors[0])
+        w_flat = flatten(w)
+
+        # Radial part
+        lengths = e3nn.norm(vectors).array  # [n_edges, 1]
+        mix = MultiLayerPerceptron(
+            self.mlp_n_layers * (self.mlp_n_hidden,)
+            + (messages.shape[1] * w_flat.size,),
+            self.mlp_activation,
+            output_activation=False,
+        )(
+            e3nn.bessel(lengths[:, 0], self.n_radial_basis)
+            * e3nn.poly_envelope(5, 2)(lengths),
+        )  # [n_edges, *]
+
+        # Discard 0 length edges that come from graph padding
+        mix = jnp.where(lengths == 0.0, 0.0, mix)
+
+        mix = mix.reshape((mix.shape[0], messages.shape[1], w_flat.size))
+        w = jax.vmap(jax.vmap(lambda u: unflatten(u, w)))(mix)
+        messages = jax.vmap(
+            lambda w1, m1, v1: jax.vmap(lambda w2, m2: conv.apply(w2, m2, v1))(w1, m1)
+        )(w, messages, vectors)
+        messages = messages.axis_to_mul()
 
     # Message passing
     zeros = e3nn.IrrepsArray.zeros(
@@ -180,3 +213,16 @@ def _impl(
     assert node_feats.irreps == output_irreps
     assert node_feats.shape == (n_node, output_irreps.dim)
     return node_feats
+
+
+def flatten(w):
+    return jnp.concatenate([x.ravel() for x in jax.tree_util.tree_leaves(w)])
+
+
+def unflatten(array, template):
+    lst = []
+    start = 0
+    for x in jax.tree_util.tree_leaves(template):
+        lst.append(array[start : start + x.size].reshape(x.shape))
+        start += x.size
+    return jax.tree_util.tree_unflatten(jax.tree_util.tree_structure(template), lst)
