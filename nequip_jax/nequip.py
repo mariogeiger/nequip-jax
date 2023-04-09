@@ -125,27 +125,28 @@ def _impl(
 
     messages = node_feats[senders]
 
-    messages = messages.mul_to_axis()
-    conv = SHConvolutionFlax(e3nn.Irreps([(1, ir) for _, ir in irreps]))
-    w = conv.init(jax.random.PRNGKey(0), messages[0, 0], vectors[0])
-    w_flat = flatten(w)
+    messages = messages.mul_to_axis()  # [n_edges, mul, irreps]
+    conv = SHConvolutionFlax(e3nn.Irreps([(1, ir) for _, ir in irreps.regroup()]))
+    w_unused = conv.init(jax.random.PRNGKey(0), messages[0, 0], vectors[0])
+    w_unused_flat = flatten(w_unused)
 
     # Radial part
     lengths = e3nn.norm(vectors).array  # [n_edges, 1]
     mix = MultiLayerPerceptron(
-        self.mlp_n_layers * (self.mlp_n_hidden,) + (messages.shape[1] * w_flat.size,),
+        self.mlp_n_layers * (self.mlp_n_hidden,)
+        + (messages.shape[1] * w_unused_flat.size,),
         self.mlp_activation,
         output_activation=False,
     )(
         e3nn.bessel(lengths[:, 0], self.n_radial_basis)
         * e3nn.poly_envelope(5, 2)(lengths),
-    )  # [n_edges, *]
+    )  # [n_edges, mul * w_unused_flat.size]
 
     # Discard 0 length edges that come from graph padding
     mix = jnp.where(lengths == 0.0, 0.0, mix)
 
-    mix = mix.reshape((mix.shape[0], messages.shape[1], w_flat.size))
-    w = jax.vmap(jax.vmap(lambda u: unflatten(u, w)))(mix)
+    mix = mix.reshape((mix.shape[0], messages.shape[1], w_unused_flat.size))
+    w = jax.vmap(jax.vmap(lambda u: unflatten(u, w_unused)))(mix)
     messages = jax.vmap(
         lambda w1, m1, v1: jax.vmap(lambda w2, m2: conv.apply(w2, m2, v1))(w1, m1)
     )(w, messages, vectors)
