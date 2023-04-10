@@ -26,7 +26,7 @@ class NEQUIP(flax.linen.Module):
             layer = NEQUIPLayerFlax(
                 avg_num_neighbors=1.0,
                 output_irreps=64 * e3nn.Irreps.spherical_harmonics(args.max_ell),
-                max_ell=args.max_ell,
+                max_ell=2 * args.max_ell,
             )
             node_feats = layer(
                 vectors,
