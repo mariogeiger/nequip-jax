@@ -5,7 +5,7 @@ import flax
 import haiku as hk
 import jax
 import jax.numpy as jnp
-from e3nn_jax.experimental.spherical_harmonics_convolution import SHConvolutionFlax
+from e3nn_jax.experimental.linear_shtp import LinearSHTP
 
 
 class NEQUIPLayerFlax(flax.linen.Module):
@@ -126,7 +126,7 @@ def _impl(
     messages = node_feats[senders]
 
     messages = messages.mul_to_axis()  # [n_edges, mul, irreps]
-    conv = SHConvolutionFlax(e3nn.Irreps([(1, ir) for _, ir in irreps.regroup()]))
+    conv = LinearSHTP(irreps, mix=False)
     w_unused = conv.init(jax.random.PRNGKey(0), messages[0, 0], vectors[0])
     w_unused_flat = flatten(w_unused)
 
