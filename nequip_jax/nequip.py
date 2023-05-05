@@ -97,13 +97,13 @@ def _impl(
     senders: jnp.ndarray,  # [n_edges]
     receivers: jnp.ndarray,  # [n_edges]
 ):
-    n_edge = vectors.shape[0]
-    n_node = node_feats.shape[0]
-    assert vectors.shape == (n_edge, 3)
-    assert node_feats.shape == (n_node, node_feats.irreps.dim)
-    assert node_specie.shape == (n_node,)
-    assert senders.shape == (n_edge,)
-    assert receivers.shape == (n_edge,)
+    num_nodes = node_feats.shape[0]
+    num_edges = vectors.shape[0]
+    assert vectors.shape == (num_edges, 3)
+    assert node_feats.shape == (num_nodes, node_feats.irreps.dim)
+    assert node_specie.shape == (num_nodes,)
+    assert senders.shape == (num_edges,)
+    assert receivers.shape == (num_edges,)
 
     # we regroup the target irreps to make sure that gate activation
     # has the same irreps as the target
@@ -158,10 +158,7 @@ def _impl(
     messages = messages * mix  # [n_edges, irreps]
 
     # Message passing
-    zeros = e3nn.IrrepsArray.zeros(
-        messages.irreps, node_feats.shape[:1], messages.dtype
-    )
-    node_feats = zeros.at[receivers].add(messages)  # [n_nodes, irreps]
+    node_feats = e3nn.scatter_sum(messages, dst=receivers, output_size=num_nodes)
     node_feats = node_feats / jnp.sqrt(self.avg_num_neighbors)
 
     node_feats = Linear(irreps, name="linear_down")(node_feats)
@@ -180,5 +177,5 @@ def _impl(
         f"gate activation changed the irreps, {node_feats.irreps} != {output_irreps}. "
         "Put the scalars on the left of output_irreps to avoid this issue."
     )
-    assert node_feats.shape == (n_node, output_irreps.dim)
+    assert node_feats.shape == (num_nodes, output_irreps.dim)
     return node_feats
