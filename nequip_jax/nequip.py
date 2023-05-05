@@ -110,9 +110,8 @@ def _impl(
     output_irreps = e3nn.Irreps(self.output_irreps).regroup()
 
     # target irreps plus extra scalars for the gate activation
-    irreps = output_irreps + output_irreps.filter(
-        drop="0e + 0o"
-    ).num_irreps * e3nn.Irreps("0e")
+    num_nonscalar = output_irreps.filter(drop="0e + 0o").num_irreps
+    irreps = output_irreps + e3nn.Irreps(f"{num_nonscalar}x0e").simplify()
 
     self_connection = Linear(
         irreps, num_indexed_weights=self.num_species, name="skip_tp"
