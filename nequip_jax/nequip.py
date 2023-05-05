@@ -176,6 +176,9 @@ def _impl(
         odd_gate_act=self.odd_activation,
     )
 
-    assert node_feats.irreps == output_irreps
+    assert node_feats.irreps == output_irreps, (
+        f"gate activation changed the irreps, {node_feats.irreps} != {output_irreps}. "
+        "Put the scalars on the left of output_irreps to avoid this issue."
+    )
     assert node_feats.shape == (n_node, output_irreps.dim)
     return node_feats
