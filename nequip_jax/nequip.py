@@ -11,6 +11,8 @@ class NEQUIPLayerFlax(flax.linen.Module):
     avg_num_neighbors: float
     num_species: int = 1
     max_ell: int = 3
+    # if output_mul is specified, output_irreps acts as a filter
+    output_mul: Optional[float] = None
     output_irreps: e3nn.Irreps = 64 * e3nn.Irreps("0e + 1o + 2e")
     even_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish
     odd_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.tanh
@@ -46,6 +48,8 @@ class NEQUIPLayerHaiku(hk.Module):
         avg_num_neighbors: float,
         num_species: int = 1,
         max_ell: int = 3,
+        # if output_mul is specified, output_irreps acts as a filter
+        output_mul: Optional[float] = None,
         output_irreps: e3nn.Irreps = 64 * e3nn.Irreps("0e + 1o + 2e"),
         even_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish,
         odd_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.tanh,
@@ -59,6 +63,7 @@ class NEQUIPLayerHaiku(hk.Module):
         self.avg_num_neighbors = avg_num_neighbors
         self.num_species = num_species
         self.max_ell = max_ell
+        self.output_mul = output_mul
         self.output_irreps = output_irreps
         self.even_activation = even_activation
         self.odd_activation = odd_activation
@@ -109,24 +114,12 @@ def _impl(
     # has the same irreps as the target
     output_irreps = e3nn.Irreps(self.output_irreps).regroup()
 
-    # target irreps plus extra scalars for the gate activation
-    num_nonscalar = output_irreps.filter(drop="0e + 0o").num_irreps
-    irreps = output_irreps + e3nn.Irreps(f"{num_nonscalar}x0e").simplify()
-
-    self_connection = Linear(
-        irreps, num_indexed_weights=self.num_species, name="skip_tp"
-    )(
-        node_specie, node_feats
-    )  # [n_nodes, feature * output_irreps]
-
-    node_feats = Linear(node_feats.irreps, name="linear_up")(node_feats)
-
-    messages = node_feats[senders]
+    messages = Linear(node_feats.irreps, name="linear_up")(node_feats)[senders]
 
     # Angular part
     messages = e3nn.concatenate(
         [
-            messages.filter(irreps),
+            messages.filter(output_irreps + "0e"),
             e3nn.tensor_product(
                 messages,
                 e3nn.spherical_harmonics(
@@ -135,7 +128,7 @@ def _impl(
                     normalize=True,
                     normalization="component",
                 ),
-                filter_ir_out=irreps,
+                filter_ir_out=output_irreps + "0e",
             ),
         ]
     ).regroup()  # [n_edges, irreps]
@@ -157,6 +150,19 @@ def _impl(
     # Product of radial and angular part
     messages = messages * mix  # [n_edges, irreps]
 
+    # Self connection
+    if self.output_mul is None:
+        irreps = output_irreps
+    else:
+        irreps = messages.irreps.filter(keep=output_irreps).regroup()
+        irreps = e3nn.Irreps([(self.output_mul, ir) for _, ir in irreps])
+    num_nonscalar = irreps.filter(drop="0e + 0o").num_irreps
+    irreps = irreps + e3nn.Irreps(f"{num_nonscalar}x0e").simplify()
+
+    self_connection = Linear(
+        irreps, num_indexed_weights=self.num_species, name="skip_tp"
+    )(node_specie, node_feats)
+
     # Message passing
     node_feats = e3nn.scatter_sum(messages, dst=receivers, output_size=num_nodes)
     node_feats = node_feats / jnp.sqrt(self.avg_num_neighbors)
@@ -173,9 +179,10 @@ def _impl(
         odd_gate_act=self.odd_activation,
     )
 
-    assert node_feats.irreps == output_irreps, (
-        f"gate activation changed the irreps, {node_feats.irreps} != {output_irreps}. "
-        "Put the scalars on the left of output_irreps to avoid this issue."
-    )
-    assert node_feats.shape == (num_nodes, output_irreps.dim)
+    if self.output_mul is None:
+        assert node_feats.irreps == output_irreps, (
+            f"gate activation changed the irreps, {node_feats.irreps} != {output_irreps}. "
+            "Put the scalars on the left of output_irreps to avoid this issue."
+        )
+        assert node_feats.shape == (num_nodes, output_irreps.dim)
     return node_feats
