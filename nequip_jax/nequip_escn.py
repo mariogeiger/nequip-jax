@@ -12,10 +12,10 @@ class NEQUIPESCNLayerFlax(flax.linen.Module):
     avg_num_neighbors: float
     num_species: int = 1
     output_irreps: e3nn.Irreps = 64 * e3nn.Irreps("0e + 1o + 2e")
-    even_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish
+    even_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.silu
     odd_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.tanh
-    gate_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.sigmoid
-    mlp_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish
+    gate_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.silu
+    mlp_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.silu
     mlp_n_hidden: int = 64
     mlp_n_layers: int = 2
     n_radial_basis: int = 8
@@ -47,10 +47,10 @@ class NEQUIPESCNLayerHaiku(hk.Module):
         avg_num_neighbors: float,
         num_species: int = 1,
         output_irreps: e3nn.Irreps = 64 * e3nn.Irreps("0e + 1o + 2e"),
-        even_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish,
+        even_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.silu,
         odd_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.tanh,
-        gate_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.sigmoid,
-        mlp_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish,
+        gate_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.silu,
+        mlp_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.silu,
         mlp_n_hidden: int = 64,
         mlp_n_layers: int = 2,
         n_radial_basis: int = 8,
