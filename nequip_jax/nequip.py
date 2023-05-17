@@ -11,11 +11,10 @@ class NEQUIPLayerFlax(flax.linen.Module):
     avg_num_neighbors: float
     num_species: int = 1
     max_ell: int = 3
-    # if output_mul is specified, output_irreps acts as a filter
-    output_mul: Optional[float] = None
     output_irreps: e3nn.Irreps = 64 * e3nn.Irreps("0e + 1o + 2e")
     even_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish
     odd_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.tanh
+    gate_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.sigmoid
     mlp_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish
     mlp_n_hidden: int = 64
     mlp_n_layers: int = 2
@@ -48,11 +47,10 @@ class NEQUIPLayerHaiku(hk.Module):
         avg_num_neighbors: float,
         num_species: int = 1,
         max_ell: int = 3,
-        # if output_mul is specified, output_irreps acts as a filter
-        output_mul: Optional[float] = None,
         output_irreps: e3nn.Irreps = 64 * e3nn.Irreps("0e + 1o + 2e"),
         even_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish,
         odd_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.tanh,
+        gate_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.sigmoid,
         mlp_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish,
         mlp_n_hidden: int = 64,
         mlp_n_layers: int = 2,
@@ -63,10 +61,10 @@ class NEQUIPLayerHaiku(hk.Module):
         self.avg_num_neighbors = avg_num_neighbors
         self.num_species = num_species
         self.max_ell = max_ell
-        self.output_mul = output_mul
         self.output_irreps = output_irreps
         self.even_activation = even_activation
         self.odd_activation = odd_activation
+        self.gate_activation = gate_activation
         self.mlp_activation = mlp_activation
         self.mlp_n_hidden = mlp_n_hidden
         self.mlp_n_layers = mlp_n_layers
@@ -131,10 +129,11 @@ def _impl(
                 filter_ir_out=output_irreps + "0e",
             ),
         ]
-    ).regroup()  # [n_edges, irreps]
+    ).regroup()
+    assert messages.shape == (num_edges, messages.irreps.dim)
 
     # Radial part
-    lengths = e3nn.norm(vectors).array  # [n_edges, 1]
+    lengths = e3nn.norm(vectors).array
     mix = MultiLayerPerceptron(
         self.mlp_n_layers * (self.mlp_n_hidden,) + (messages.irreps.num_irreps,),
         self.mlp_activation,
@@ -142,26 +141,24 @@ def _impl(
     )(
         e3nn.bessel(lengths[:, 0], self.n_radial_basis)
         * e3nn.poly_envelope(5, 2)(lengths),
-    )  # [n_edges, num_irreps]
+    )
 
     # Discard 0 length edges that come from graph padding
     mix = jnp.where(lengths == 0.0, 0.0, mix)
+    assert mix.shape == (num_edges, messages.irreps.num_irreps)
 
     # Product of radial and angular part
-    messages = messages * mix  # [n_edges, irreps]
+    messages = messages * mix
+    assert messages.shape == (num_edges, messages.irreps.dim)
 
-    # Self connection
-    if self.output_mul is None:
-        irreps = output_irreps
-    else:
-        irreps = messages.irreps.filter(keep=output_irreps).regroup()
-        irreps = e3nn.Irreps([(self.output_mul, ir) for _, ir in irreps])
+    # Skip connection
+    irreps = output_irreps.filter(keep=messages.irreps)
     num_nonscalar = irreps.filter(drop="0e + 0o").num_irreps
     irreps = irreps + e3nn.Irreps(f"{num_nonscalar}x0e").simplify()
 
-    self_connection = Linear(
-        irreps, num_indexed_weights=self.num_species, name="skip_tp"
-    )(node_specie, node_feats)
+    skip = Linear(irreps, num_indexed_weights=self.num_species, name="skip_tp")(
+        node_specie, node_feats
+    )
 
     # Message passing
     node_feats = e3nn.scatter_sum(messages, dst=receivers, output_size=num_nodes)
@@ -169,20 +166,14 @@ def _impl(
 
     node_feats = Linear(irreps, name="linear_down")(node_feats)
 
-    node_feats = node_feats + self_connection  # [n_nodes, irreps]
+    node_feats = node_feats + skip
+    assert node_feats.shape == (num_nodes, node_feats.irreps.dim)
 
     node_feats = e3nn.gate(
         node_feats,
         even_act=self.even_activation,
-        even_gate_act=self.even_activation,
         odd_act=self.odd_activation,
-        odd_gate_act=self.odd_activation,
+        even_gate_act=self.gate_activation,
     )
 
-    if self.output_mul is None:
-        assert node_feats.irreps == output_irreps, (
-            f"gate activation changed the irreps, {node_feats.irreps} != {output_irreps}. "
-            "Put the scalars on the left of output_irreps to avoid this issue."
-        )
-        assert node_feats.shape == (num_nodes, output_irreps.dim)
     return node_feats

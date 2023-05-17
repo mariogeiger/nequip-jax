@@ -14,6 +14,7 @@ class NEQUIPESCNLayerFlax(flax.linen.Module):
     output_irreps: e3nn.Irreps = 64 * e3nn.Irreps("0e + 1o + 2e")
     even_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish
     odd_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.tanh
+    gate_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.sigmoid
     mlp_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish
     mlp_n_hidden: int = 64
     mlp_n_layers: int = 2
@@ -48,6 +49,7 @@ class NEQUIPESCNLayerHaiku(hk.Module):
         output_irreps: e3nn.Irreps = 64 * e3nn.Irreps("0e + 1o + 2e"),
         even_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish,
         odd_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.tanh,
+        gate_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.sigmoid,
         mlp_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.swish,
         mlp_n_hidden: int = 64,
         mlp_n_layers: int = 2,
@@ -60,6 +62,7 @@ class NEQUIPESCNLayerHaiku(hk.Module):
         self.output_irreps = output_irreps
         self.even_activation = even_activation
         self.odd_activation = odd_activation
+        self.gate_activation = gate_activation
         self.mlp_activation = mlp_activation
         self.mlp_n_hidden = mlp_n_hidden
         self.mlp_n_layers = mlp_n_layers
@@ -107,26 +110,14 @@ def _impl(
     # has the same irreps as the target
     output_irreps = e3nn.Irreps(self.output_irreps).regroup()
 
-    # target irreps plus extra scalars for the gate activation
-    num_nonscalar = output_irreps.filter(drop="0e + 0o").num_irreps
-    irreps = output_irreps + e3nn.Irreps(f"{num_nonscalar}x0e").simplify()
+    messages = Linear(node_feats.irreps, name="linear_up")(node_feats)[senders]
 
-    self_connection = Linear(
-        irreps, num_indexed_weights=self.num_species, name="skip_tp"
-    )(
-        node_specie, node_feats
-    )  # [n_nodes, feature * output_irreps]
-
-    node_feats = Linear(node_feats.irreps, name="linear_up")(node_feats)
-
-    messages = node_feats[senders]
-
-    conv = LinearSHTP(irreps, mix=False)
+    conv = LinearSHTP(output_irreps, mix=False)
     w_unused = conv.init(jax.random.PRNGKey(0), messages[0], vectors[0])
     w_unused_flat = flatten(w_unused)
 
     # Radial part
-    lengths = e3nn.norm(vectors).array  # [n_edges, 1]
+    lengths = e3nn.norm(vectors).array
     mix = MultiLayerPerceptron(
         self.mlp_n_layers * (self.mlp_n_hidden,) + (w_unused_flat.size,),
         self.mlp_activation,
@@ -134,13 +125,24 @@ def _impl(
     )(
         e3nn.bessel(lengths[:, 0], self.n_radial_basis)
         * e3nn.poly_envelope(5, 2)(lengths),
-    )  # [n_edges, mul * w_unused_flat.size]
+    )
 
     # Discard 0 length edges that come from graph padding
     mix = jnp.where(lengths == 0.0, 0.0, mix)
+    assert mix.shape == (num_edges, w_unused_flat.size)
 
     w = jax.vmap(unflatten, (0, None))(mix, w_unused)
     messages = jax.vmap(conv.apply)(w, messages, vectors)
+    assert messages.shape == (num_edges, messages.irreps.dim)
+
+    # Skip connection
+    irreps = output_irreps.filter(keep=messages.irreps)
+    num_nonscalar = irreps.filter(drop="0e + 0o").num_irreps
+    irreps = irreps + e3nn.Irreps(f"{num_nonscalar}x0e").simplify()
+
+    skip = Linear(irreps, num_indexed_weights=self.num_species, name="skip_tp")(
+        node_specie, node_feats
+    )
 
     # Message passing
     node_feats = e3nn.scatter_sum(messages, dst=receivers, output_size=num_nodes)
@@ -148,21 +150,16 @@ def _impl(
 
     node_feats = Linear(irreps, name="linear_down")(node_feats)
 
-    node_feats = node_feats + self_connection  # [n_nodes, irreps]
+    node_feats = node_feats + skip
+    assert node_feats.shape == (num_nodes, node_feats.irreps.dim)
 
     node_feats = e3nn.gate(
         node_feats,
         even_act=self.even_activation,
-        even_gate_act=self.even_activation,
         odd_act=self.odd_activation,
-        odd_gate_act=self.odd_activation,
+        even_gate_act=self.gate_activation,
     )
 
-    assert node_feats.irreps == output_irreps, (
-        f"gate activation changed the irreps, {node_feats.irreps} != {output_irreps}. "
-        "Put the scalars on the left of output_irreps to avoid this issue."
-    )
-    assert node_feats.shape == (num_nodes, output_irreps.dim)
     return node_feats
 
 

@@ -43,7 +43,8 @@ def test_nequip_flax():
 
             for _ in range(2):
                 layer = NEQUIPLayerFlax(
-                    avg_num_neighbors=1.0, output_irreps="16x0e + 16x1o"
+                    avg_num_neighbors=1.0,
+                    output_irreps="16x0e + 16x1o",
                 )
                 node_feats = layer(
                     vectors,
@@ -81,8 +82,7 @@ def test_nequip_haiku():
         for _ in range(3):
             layer = NEQUIPLayerHaiku(
                 avg_num_neighbors=1.0,
-                output_mul=16,
-                output_irreps="0e + 1o",  # act as a filter
+                output_irreps="16x0e + 16x1o",
             )
             node_feats = layer(
                 vectors,
