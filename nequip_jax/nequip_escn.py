@@ -140,9 +140,12 @@ def _impl(
     num_nonscalar = irreps.filter(drop="0e + 0o").num_irreps
     irreps = irreps + e3nn.Irreps(f"{num_nonscalar}x0e").simplify()
 
-    skip = Linear(irreps, num_indexed_weights=self.num_species, name="skip_tp")(
-        node_specie, node_feats
-    )
+    skip = Linear(
+        irreps,
+        num_indexed_weights=self.num_species,
+        name="skip_tp",
+        force_irreps_out=True,
+    )(node_specie, node_feats)
 
     # Message passing
     node_feats = e3nn.scatter_sum(messages, dst=receivers, output_size=num_nodes)
