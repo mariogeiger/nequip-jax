@@ -10,6 +10,7 @@ from nequip_jax import (
     NEQUIPLayerHaiku,
     NEQUIPESCNLayerFlax,
     NEQUIPESCNLayerHaiku,
+    filter_layers,
 )
 
 
@@ -41,10 +42,13 @@ def test_nequip_flax():
             node_feats = flax.linen.Embed(num_embeddings=5, features=32)(species)
             node_feats = e3nn.IrrepsArray(f"{node_feats.shape[1]}x0e", node_feats)
 
-            for _ in range(2):
+            layers_irreps = ["16x0e + 16x1o + 16x1e"] * 2 + ["0e"]
+            layers_irreps = filter_layers(layers_irreps, max_ell=3)
+            for irreps in layers_irreps:
                 layer = NEQUIPLayerFlax(
                     avg_num_neighbors=1.0,
-                    output_irreps="16x0e + 16x1o",
+                    output_irreps=irreps,
+                    max_ell=3,
                 )
                 node_feats = layer(
                     vectors,
@@ -79,10 +83,13 @@ def test_nequip_haiku():
         node_feats = hk.Embed(vocab_size=5, embed_dim=32)(species)
         node_feats = e3nn.IrrepsArray(f"{node_feats.shape[1]}x0e", node_feats)
 
-        for _ in range(3):
+        layers_irreps = ["16x0e + 16x1o + 16x1e"] * 2 + ["0e"]
+        layers_irreps = filter_layers(layers_irreps, max_ell=3)
+        for irreps in layers_irreps:
             layer = NEQUIPLayerHaiku(
                 avg_num_neighbors=1.0,
-                output_irreps="16x0e + 16x1o",
+                output_irreps=irreps,
+                max_ell=3,
             )
             node_feats = layer(
                 vectors,
@@ -116,10 +123,12 @@ def test_nequip_escn_flax():
             node_feats = flax.linen.Embed(num_embeddings=5, features=32)(species)
             node_feats = e3nn.IrrepsArray(f"{node_feats.shape[1]}x0e", node_feats)
 
-            for _ in range(2):
+            layers_irreps = ["16x0e + 16x1o + 16x1e"] * 2 + ["0e"]
+            layers_irreps = filter_layers(layers_irreps, max_ell=None)
+            for irreps in layers_irreps:
                 layer = NEQUIPESCNLayerFlax(
                     avg_num_neighbors=1.0,
-                    output_irreps="16x0e + 16x1o",
+                    output_irreps=irreps,
                 )
                 node_feats = layer(
                     vectors,
@@ -154,10 +163,12 @@ def test_nequip_escn_haiku():
         node_feats = hk.Embed(vocab_size=5, embed_dim=32)(species)
         node_feats = e3nn.IrrepsArray(f"{node_feats.shape[1]}x0e", node_feats)
 
-        for _ in range(3):
+        layers_irreps = ["16x0e + 16x1o + 16x1e"] * 2 + ["0e"]
+        layers_irreps = filter_layers(layers_irreps, max_ell=None)
+        for irreps in layers_irreps:
             layer = NEQUIPESCNLayerHaiku(
                 avg_num_neighbors=1.0,
-                output_irreps="16x0e + 16x1o",
+                output_irreps=irreps,
             )
             node_feats = layer(
                 vectors,
