@@ -7,6 +7,8 @@ import jax
 import jax.numpy as jnp
 from e3nn_jax.experimental.linear_shtp import LinearSHTP
 
+from .radial import default_radial_basis
+
 
 class NEQUIPESCNLayerFlax(flax.linen.Module):
     avg_num_neighbors: float
@@ -18,6 +20,7 @@ class NEQUIPESCNLayerFlax(flax.linen.Module):
     mlp_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.silu
     mlp_n_hidden: int = 64
     mlp_n_layers: int = 2
+    radial_basis: Callable[[jnp.ndarray, int], jnp.ndarray] = default_radial_basis
     n_radial_basis: int = 8
 
     @flax.linen.compact
@@ -117,15 +120,14 @@ def _impl(
     w_unused_flat = flatten(w_unused)
 
     # Radial part
+    with jax.ensure_compile_time_eval():
+        assert abs(self.mlp_activation(0.0)) < 1e-6
     lengths = e3nn.norm(vectors).array
     mix = MultiLayerPerceptron(
         self.mlp_n_layers * (self.mlp_n_hidden,) + (w_unused_flat.size,),
         self.mlp_activation,
         output_activation=False,
-    )(
-        e3nn.bessel(lengths[:, 0], self.n_radial_basis)
-        * e3nn.poly_envelope(5, 2)(lengths),
-    )
+    )(self.radial_basis(lengths[:, 0], self.n_radial_basis))
 
     # Discard 0 length edges that come from graph padding
     mix = jnp.where(lengths == 0.0, 0.0, mix)
