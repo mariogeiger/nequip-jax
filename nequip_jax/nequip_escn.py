@@ -56,6 +56,7 @@ class NEQUIPESCNLayerHaiku(hk.Module):
         mlp_activation: Callable[[jnp.ndarray], jnp.ndarray] = jax.nn.silu,
         mlp_n_hidden: int = 64,
         mlp_n_layers: int = 2,
+        radial_basis: Callable[[jnp.ndarray, int], jnp.ndarray] = default_radial_basis,
         n_radial_basis: int = 8,
         name: Optional[str] = None,
     ):
@@ -69,6 +70,7 @@ class NEQUIPESCNLayerHaiku(hk.Module):
         self.mlp_activation = mlp_activation
         self.mlp_n_hidden = mlp_n_hidden
         self.mlp_n_layers = mlp_n_layers
+        self.radial_basis = radial_basis
         self.n_radial_basis = n_radial_basis
 
     def __call__(
