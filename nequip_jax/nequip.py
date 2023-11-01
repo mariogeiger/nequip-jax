@@ -105,6 +105,8 @@ def _impl(
     senders: jnp.ndarray,  # [n_edges]
     receivers: jnp.ndarray,  # [n_edges]
 ):
+    node_feats = e3nn.as_irreps_array(node_feats)
+
     num_nodes = node_feats.shape[0]
     num_edges = vectors.shape[0]
     assert vectors.shape == (num_edges, 3)
